@@ -1,7 +1,7 @@
 [
   {
     "ParameterKey": "Project",
-    "ParameterValue": "YOUR_PROJECT_NAME"
+    "ParameterValue": "pipeline"
   },
   {
     "ParameterKey": "Environment",
@@ -13,15 +13,15 @@
   },
   {
     "ParameterKey": "ReactRepository",
-    "ParameterValue": "YOUR_GITHUB_USERNAME/YOUR_REACT_REPO_NAME"
+    "ParameterValue": "yeashwantbabu/react-pipeline"
   },
   {
     "ParameterKey": "ReactBranch",
-    "ParameterValue": "main"
+    "ParameterValue": "dev"
   },
   {
     "ParameterKey": "ArtifactsBucket",
-    "ParameterValue": "YOUR_PROJECT_NAME-artifacts-dev"
+    "ParameterValue": "pipeline-artifacts-dev"
   },
   {
     "ParameterKey": "EC2InstanceType",
