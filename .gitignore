@@ -1,0 +1,8 @@
+# Never commit these
+*.pem
+parameters.json
+parameters.pipeline.json
+
+# Keep example files so teammates know what's needed
+!parameters.example.json
+!parameters.pipeline.example.json

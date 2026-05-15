@@ -1,0 +1,26 @@
+[
+  {
+    "ParameterKey": "Project",
+    "ParameterValue": "YOUR_PROJECT_NAME"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "ConnectionArn",
+    "ParameterValue": "arn:aws:codestar-connections:REGION:ACCOUNT_ID:connection/XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+  },
+  {
+    "ParameterKey": "InfraRepository",
+    "ParameterValue": "YOUR_GITHUB_USERNAME/YOUR_INFRA_REPO_NAME"
+  },
+  {
+    "ParameterKey": "InfraBranch",
+    "ParameterValue": "main"
+  },
+  {
+    "ParameterKey": "S3Bucket",
+    "ParameterValue": "YOUR_PROJECT_NAME-artifacts-dev"
+  }
+]

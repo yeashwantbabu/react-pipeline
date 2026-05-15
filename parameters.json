@@ -1,0 +1,34 @@
+[
+  {
+    "ParameterKey": "Project",
+    "ParameterValue": "YOUR_PROJECT_NAME"
+  },
+  {
+    "ParameterKey": "Environment",
+    "ParameterValue": "dev"
+  },
+  {
+    "ParameterKey": "ConnectionArn",
+    "ParameterValue": "arn:aws:codestar-connections:REGION:ACCOUNT_ID:connection/XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+  },
+  {
+    "ParameterKey": "ReactRepository",
+    "ParameterValue": "YOUR_GITHUB_USERNAME/YOUR_REACT_REPO_NAME"
+  },
+  {
+    "ParameterKey": "ReactBranch",
+    "ParameterValue": "main"
+  },
+  {
+    "ParameterKey": "ArtifactsBucket",
+    "ParameterValue": "YOUR_PROJECT_NAME-artifacts-dev"
+  },
+  {
+    "ParameterKey": "EC2InstanceType",
+    "ParameterValue": "t3.micro"
+  },
+  {
+    "ParameterKey": "SSHAccessCIDR",
+    "ParameterValue": "YOUR.IP.ADDRESS/32"
+  }
+]
