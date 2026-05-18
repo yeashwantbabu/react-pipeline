@@ -56,20 +56,10 @@ Parameters:
     Type: AWS::EC2::Subnet::Id
     Description: Existing public subnet ID within the VPC
 
-# ──────────────────────────────────────────────────────────────
-# MAPPINGS — Amazon Linux 2023 AMI per region
-# ──────────────────────────────────────────────────────────────
-Mappings:
-  AmiMap:
-    us-east-1:      { AMI: ami-0f9de6e2d2f067fca }
-    us-east-2:      { AMI: ami-0490fddec0cbeb88b }
-    us-west-1:      { AMI: ami-0a6dc7529cd559185 }
-    us-west-2:      { AMI: ami-05572e392e80aee89 }
-    ap-south-1:     { AMI: ami-0f58b397bc5c1f2e8 }
-    ap-southeast-1: { AMI: ami-0b825ad86ddcfb907 }
-    ap-southeast-2: { AMI: ami-0310483fb2b488153 }
-    eu-west-1:      { AMI: ami-0fed63ea358539e44 }
-    eu-central-1:   { AMI: ami-0faab6bdbac9486fb }
+  # Resolves automatically to the latest AL2023 x86_64 AMI in the current region
+  LatestAL2023AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
 
 # ──────────────────────────────────────────────────────────────
 # RESOURCES
@@ -217,7 +207,7 @@ Resources:
     Properties:
       InstanceType: !Ref EC2InstanceType
       KeyName: !Ref EC2KeyPair
-      ImageId: !FindInMap [AmiMap, !Ref AWS::Region, AMI]
+      ImageId: !Ref LatestAL2023AmiId
       SubnetId: !Ref SubnetId
       SecurityGroupIds:
         - !Ref EC2SecurityGroup

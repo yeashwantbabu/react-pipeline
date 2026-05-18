@@ -62,27 +62,50 @@ phases:
     commands:
       - |
         set -e
+
+        print_cfn_errors() {
+          echo "=== CloudFormation CREATE_FAILED events ==="
+          aws cloudformation describe-stack-events \
+            --stack-name $STACK_NAME \
+            --region $AWS_DEFAULT_REGION \
+            --query "StackEvents[?ResourceStatus=='CREATE_FAILED'].[LogicalResourceId,ResourceStatusReason]" \
+            --output table 2>/dev/null || true
+        }
+
         STACK_STATUS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "DOES_NOT_EXIST")
         echo "Stack status: $STACK_STATUS"
+
         if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
           echo "Creating stack $STACK_NAME"
           aws cloudformation create-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$FILTERED_PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION
-          aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
+          if ! aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION; then
+            print_cfn_errors
+            exit 1
+          fi
           echo "Stack created."
+
         elif [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
           echo "Stack in ROLLBACK_COMPLETE - deleting and recreating"
           aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
           aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
+          echo "Deleted. Recreating..."
           aws cloudformation create-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$FILTERED_PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION
-          aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
+          if ! aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION; then
+            print_cfn_errors
+            exit 1
+          fi
           echo "Stack recreated."
+
         else
           echo "Updating stack $STACK_NAME"
           UPDATE_OUTPUT=$(aws cloudformation update-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$FILTERED_PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION 2>&1 || echo "NO_CHANGE")
           if echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
             echo "No changes - stack already up to date."
           else
-            aws cloudformation wait stack-update-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
+            if ! aws cloudformation wait stack-update-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION; then
+              print_cfn_errors
+              exit 1
+            fi
             echo "Stack updated."
           fi
         fi
