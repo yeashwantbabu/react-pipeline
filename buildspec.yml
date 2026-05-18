@@ -4,12 +4,14 @@ env:
   variables:
     TEMPLATE_FILE: cloudformation/main.yml
     PARAMS_FILE: parameters.json
+    FILTERED_PARAMS_FILE: /tmp/main-params.json
 
 phases:
 
   install:
     commands:
       - aws --version
+      - python3 --version
 
   pre_build:
     commands:
@@ -18,6 +20,43 @@ phases:
       - echo "Stack $STACK_NAME"
       - echo "Region $AWS_DEFAULT_REGION"
       - aws cloudformation validate-template --template-body file://$TEMPLATE_FILE --region $AWS_DEFAULT_REGION
+      - |
+        python3 - <<'PYEOF'
+        import json, sys
+
+        template_file = "cloudformation/main.yml"
+        params_file   = "parameters.json"
+        output_file   = "/tmp/main-params.json"
+
+        with open(template_file) as f:
+            content = f.read()
+
+        in_params = False
+        declared_keys = []
+        skip_words = {'Type','Default','Description','AllowedValues','AllowedPattern','MinLength','MaxLength'}
+
+        for line in content.splitlines():
+            if line.strip() == 'Parameters:':
+                in_params = True
+                continue
+            if in_params:
+                if line.startswith('  ') and not line.startswith('   ') and line.strip().endswith(':'):
+                    key = line.strip().rstrip(':')
+                    if key not in skip_words:
+                        declared_keys.append(key)
+                elif line and not line.startswith(' '):
+                    break
+
+        all_params = json.load(open(params_file))
+        filtered = [p for p in all_params if p['ParameterKey'] in declared_keys]
+
+        with open(output_file, 'w') as f:
+            json.dump(filtered, f, indent=2)
+
+        print("Filtered parameters for main.yml:")
+        for p in filtered:
+            print(f"  {p['ParameterKey']} = {p['ParameterValue']}")
+        PYEOF
 
   build:
     commands:
@@ -27,19 +66,19 @@ phases:
         echo "Stack status: $STACK_STATUS"
         if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
           echo "Creating stack $STACK_NAME"
-          aws cloudformation create-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION
+          aws cloudformation create-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$FILTERED_PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION
           aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
           echo "Stack created."
         elif [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
           echo "Stack in ROLLBACK_COMPLETE - deleting and recreating"
           aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
           aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
-          aws cloudformation create-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION
+          aws cloudformation create-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$FILTERED_PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION
           aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
           echo "Stack recreated."
         else
           echo "Updating stack $STACK_NAME"
-          UPDATE_OUTPUT=$(aws cloudformation update-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION 2>&1 || echo "NO_CHANGE")
+          UPDATE_OUTPUT=$(aws cloudformation update-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$FILTERED_PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION 2>&1 || echo "NO_CHANGE")
           if echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
             echo "No changes - stack already up to date."
           else
@@ -50,7 +89,7 @@ phases:
 
   post_build:
     commands:
-      - aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION --query "Stacks[0].Outputs[*].[OutputKey,OutputValue]" --output table
+      - aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION --query "Stacks[0].Outputs[*].[OutputKey,OutputValue]" --output table || true
       - echo "Infrastructure deployment complete."
 
 artifacts:
