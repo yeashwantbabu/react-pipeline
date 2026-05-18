@@ -9,91 +9,49 @@ phases:
 
   install:
     commands:
-      - echo "=== Install phase ==="
       - aws --version
 
   pre_build:
     commands:
-      - echo "=== Pre-build phase ==="
-      - echo "Project     : $PROJECT"
-      - echo "Environment : $ENVIRONMENT"
-      - echo "Stack name  : $STACK_NAME"
-      - echo "Region      : $AWS_DEFAULT_REGION"
-      - echo "Validating CloudFormation template..."
+      - echo "Project $PROJECT"
+      - echo "Environment $ENVIRONMENT"
+      - echo "Stack $STACK_NAME"
+      - echo "Region $AWS_DEFAULT_REGION"
       - aws cloudformation validate-template --template-body file://$TEMPLATE_FILE --region $AWS_DEFAULT_REGION
 
   build:
     commands:
-      - echo "=== Build phase - deploying infrastructure ==="
       - |
-        STACK_STATUS=$(aws cloudformation describe-stacks \
-          --stack-name $STACK_NAME \
-          --region $AWS_DEFAULT_REGION \
-          --query "Stacks[0].StackStatus" \
-          --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-        echo "Current stack status: $STACK_STATUS"
-      - |
+        set -e
+        STACK_STATUS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+        echo "Stack status: $STACK_STATUS"
         if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
-          echo "Creating new stack: $STACK_NAME"
-          aws cloudformation create-stack \
-            --stack-name $STACK_NAME \
-            --template-body file://$TEMPLATE_FILE \
-            --parameters file://$PARAMS_FILE \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --region $AWS_DEFAULT_REGION
-          echo "Waiting for stack creation..."
-          aws cloudformation wait stack-create-complete \
-            --stack-name $STACK_NAME \
-            --region $AWS_DEFAULT_REGION
-          echo "Stack created successfully."
+          echo "Creating stack $STACK_NAME"
+          aws cloudformation create-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION
+          aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
+          echo "Stack created."
         elif [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
-          echo "Stack is in ROLLBACK_COMPLETE - deleting and recreating..."
-          aws cloudformation delete-stack \
-            --stack-name $STACK_NAME \
-            --region $AWS_DEFAULT_REGION
-          aws cloudformation wait stack-delete-complete \
-            --stack-name $STACK_NAME \
-            --region $AWS_DEFAULT_REGION
-          aws cloudformation create-stack \
-            --stack-name $STACK_NAME \
-            --template-body file://$TEMPLATE_FILE \
-            --parameters file://$PARAMS_FILE \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --region $AWS_DEFAULT_REGION
-          aws cloudformation wait stack-create-complete \
-            --stack-name $STACK_NAME \
-            --region $AWS_DEFAULT_REGION
-          echo "Stack recreated successfully."
+          echo "Stack in ROLLBACK_COMPLETE - deleting and recreating"
+          aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
+          aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
+          aws cloudformation create-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION
+          aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
+          echo "Stack recreated."
         else
-          echo "Updating existing stack: $STACK_NAME"
-          UPDATE_OUTPUT=$(aws cloudformation update-stack \
-            --stack-name $STACK_NAME \
-            --template-body file://$TEMPLATE_FILE \
-            --parameters file://$PARAMS_FILE \
-            --capabilities CAPABILITY_NAMED_IAM \
-            --region $AWS_DEFAULT_REGION 2>&1 || echo "NO_CHANGE")
+          echo "Updating stack $STACK_NAME"
+          UPDATE_OUTPUT=$(aws cloudformation update-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION 2>&1 || echo "NO_CHANGE")
           if echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
-            echo "No changes detected - stack is already up to date."
+            echo "No changes - stack already up to date."
           else
-            echo "Waiting for stack update..."
-            aws cloudformation wait stack-update-complete \
-              --stack-name $STACK_NAME \
-              --region $AWS_DEFAULT_REGION
-            echo "Stack updated successfully."
+            aws cloudformation wait stack-update-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
+            echo "Stack updated."
           fi
         fi
 
   post_build:
     commands:
-      - echo "=== Post-build phase - printing outputs ==="
-      - |
-        aws cloudformation describe-stacks \
-          --stack-name $STACK_NAME \
-          --region $AWS_DEFAULT_REGION \
-          --query "Stacks[0].Outputs[*].[OutputKey,OutputValue]" \
-          --output table
+      - aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION --query "Stacks[0].Outputs[*].[OutputKey,OutputValue]" --output table
       - echo "Infrastructure deployment complete."
-      - echo "React app pipeline is now active and ready."
 
 artifacts:
   files:
