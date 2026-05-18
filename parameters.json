@@ -21,7 +21,7 @@
   },
   {
     "ParameterKey": "ArtifactsBucket",
-    "ParameterValue": "pipeline-artifacts-dev"
+    "ParameterValue": "yeashwant-pipeline-artifacts-dev"
   },
   {
     "ParameterKey": "ReactRepository",
