@@ -28,9 +28,7 @@ phases:
       - echo "Stack name : $STACK_NAME"
       - echo "Region     : $AWS_DEFAULT_REGION"
       - echo "Validating CloudFormation template..."
-      - aws cloudformation validate-template
-          --template-body file://$TEMPLATE_FILE
-          --region $AWS_DEFAULT_REGION
+      - aws cloudformation validate-template --template-body file://$TEMPLATE_FILE --region $AWS_DEFAULT_REGION
 
   build:
     commands:
