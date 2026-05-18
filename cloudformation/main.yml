@@ -182,6 +182,7 @@ Resources:
                 Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
+                  - codestar-connections:PassConnection
                 Resource: !Ref ConnectionArn
               - Sid: CloudWatchLogs
                 Effect: Allow

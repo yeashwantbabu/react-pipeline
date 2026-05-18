@@ -26,11 +26,11 @@ phases:
           --region $AWS_DEFAULT_REGION \
           --query "Parameter.Value" \
           --output text)
-        echo "Resolved AMI ID: $AMI_ID"
-        echo $AMI_ID > /tmp/ami_id.txt
+        echo "Resolved AMI: $AMI_ID"
+        echo "$AMI_ID" > /tmp/ami_id.txt
       - |
         python3 - <<'PYEOF'
-        import json, sys
+        import json
 
         template_file = "cloudformation/main.yml"
         params_file   = "parameters.json"
@@ -58,14 +58,13 @@ phases:
         all_params = json.load(open(params_file))
         filtered = [p for p in all_params if p['ParameterKey'] in declared_keys]
 
-        # Inject the AMI ID resolved from SSM
         ami_id = open('/tmp/ami_id.txt').read().strip()
         filtered.append({'ParameterKey': 'AmiId', 'ParameterValue': ami_id})
 
         with open(output_file, 'w') as f:
             json.dump(filtered, f, indent=2)
 
-        print("Filtered parameters for main.yml:")
+        print("Parameters being passed to main.yml:")
         for p in filtered:
             print(f"  {p['ParameterKey']} = {p['ParameterValue']}")
         PYEOF
@@ -75,57 +74,84 @@ phases:
       - |
         set -e
 
-        print_cfn_errors() {
-          echo "=== CloudFormation CREATE_FAILED events ==="
+        STACK_STATUS=$(aws cloudformation describe-stacks \
+          --stack-name $STACK_NAME \
+          --region $AWS_DEFAULT_REGION \
+          --query "Stacks[0].StackStatus" \
+          --output text 2>/dev/null || echo "DOES_NOT_EXIST")
+        echo "Stack status: $STACK_STATUS"
+
+        deploy_stack() {
+          aws cloudformation create-stack \
+            --stack-name $STACK_NAME \
+            --template-body file://$TEMPLATE_FILE \
+            --parameters file://$FILTERED_PARAMS_FILE \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region $AWS_DEFAULT_REGION
+
+          echo "Waiting for stack creation (up to 15 min)..."
+          aws cloudformation wait stack-create-complete \
+            --stack-name $STACK_NAME \
+            --region $AWS_DEFAULT_REGION && return 0
+
+          echo ""
+          echo "=== STACK FAILED - CREATE_FAILED events ==="
           aws cloudformation describe-stack-events \
             --stack-name $STACK_NAME \
             --region $AWS_DEFAULT_REGION \
             --query "StackEvents[?ResourceStatus=='CREATE_FAILED'].[LogicalResourceId,ResourceStatusReason]" \
-            --output table 2>/dev/null || true
+            --output table
+          return 1
         }
-
-        STACK_STATUS=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION --query "Stacks[0].StackStatus" --output text 2>/dev/null || echo "DOES_NOT_EXIST")
-        echo "Stack status: $STACK_STATUS"
 
         if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
           echo "Creating stack $STACK_NAME"
-          aws cloudformation create-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$FILTERED_PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION
-          if ! aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION; then
-            print_cfn_errors
-            exit 1
-          fi
-          echo "Stack created."
+          deploy_stack
 
         elif [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
-          echo "Stack in ROLLBACK_COMPLETE - deleting and recreating"
+          echo "Stack in ROLLBACK_COMPLETE - deleting first"
           aws cloudformation delete-stack --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
           aws cloudformation wait stack-delete-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION
           echo "Deleted. Recreating..."
-          aws cloudformation create-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$FILTERED_PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION
-          if ! aws cloudformation wait stack-create-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION; then
-            print_cfn_errors
-            exit 1
-          fi
-          echo "Stack recreated."
+          deploy_stack
 
         else
           echo "Updating stack $STACK_NAME"
-          UPDATE_OUTPUT=$(aws cloudformation update-stack --stack-name $STACK_NAME --template-body file://$TEMPLATE_FILE --parameters file://$FILTERED_PARAMS_FILE --capabilities CAPABILITY_NAMED_IAM --region $AWS_DEFAULT_REGION 2>&1 || echo "NO_CHANGE")
+          UPDATE_OUTPUT=$(aws cloudformation update-stack \
+            --stack-name $STACK_NAME \
+            --template-body file://$TEMPLATE_FILE \
+            --parameters file://$FILTERED_PARAMS_FILE \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region $AWS_DEFAULT_REGION 2>&1 || echo "NO_CHANGE")
+
           if echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
             echo "No changes - stack already up to date."
           else
-            if ! aws cloudformation wait stack-update-complete --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION; then
-              print_cfn_errors
+            echo "Waiting for stack update..."
+            aws cloudformation wait stack-update-complete \
+              --stack-name $STACK_NAME \
+              --region $AWS_DEFAULT_REGION && echo "Stack updated." || {
+              echo ""
+              echo "=== STACK UPDATE FAILED ==="
+              aws cloudformation describe-stack-events \
+                --stack-name $STACK_NAME \
+                --region $AWS_DEFAULT_REGION \
+                --query "StackEvents[?ResourceStatus=='UPDATE_FAILED'].[LogicalResourceId,ResourceStatusReason]" \
+                --output table
               exit 1
-            fi
-            echo "Stack updated."
+            }
           fi
         fi
 
   post_build:
     commands:
-      - aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_DEFAULT_REGION --query "Stacks[0].Outputs[*].[OutputKey,OutputValue]" --output table || true
-      - echo "Infrastructure deployment complete."
+      - |
+        aws cloudformation describe-stacks \
+          --stack-name $STACK_NAME \
+          --region $AWS_DEFAULT_REGION \
+          --query "Stacks[0].Outputs[*].[OutputKey,OutputValue]" \
+          --output table || true
+      - echo "Done."
 
 artifacts:
   files:
