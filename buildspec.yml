@@ -1,17 +1,9 @@
 version: 0.2
-# ──────────────────────────────────────────────────────────────
-# infra/buildspec.yml
-# Runs inside CodeBuild as part of the Infra Pipeline.
-# Deploys cloudformation/main.yml (VPC + EC2 + React pipeline).
-# All values are read from env vars injected by the pipeline
-# or from parameters.json — zero hardcoding.
-# ──────────────────────────────────────────────────────────────
 
 env:
   variables:
     TEMPLATE_FILE: cloudformation/main.yml
     PARAMS_FILE: parameters.json
-  # STACK_NAME, ENVIRONMENT, PROJECT injected by CodeBuild project
 
 phases:
 
@@ -23,18 +15,16 @@ phases:
   pre_build:
     commands:
       - echo "=== Pre-build phase ==="
-      - echo "Project    : $PROJECT"
-      - echo "Environment: $ENVIRONMENT"
-      - echo "Stack name : $STACK_NAME"
-      - echo "Region     : $AWS_DEFAULT_REGION"
+      - echo "Project     : $PROJECT"
+      - echo "Environment : $ENVIRONMENT"
+      - echo "Stack name  : $STACK_NAME"
+      - echo "Region      : $AWS_DEFAULT_REGION"
       - echo "Validating CloudFormation template..."
       - aws cloudformation validate-template --template-body file://$TEMPLATE_FILE --region $AWS_DEFAULT_REGION
 
   build:
     commands:
-      - echo "=== Build phase — deploying infrastructure ==="
-
-      # Check if stack already exists
+      - echo "=== Build phase - deploying infrastructure ==="
       - |
         STACK_STATUS=$(aws cloudformation describe-stacks \
           --stack-name $STACK_NAME \
@@ -42,8 +32,6 @@ phases:
           --query "Stacks[0].StackStatus" \
           --output text 2>/dev/null || echo "DOES_NOT_EXIST")
         echo "Current stack status: $STACK_STATUS"
-
-      # Create or update stack
       - |
         if [ "$STACK_STATUS" = "DOES_NOT_EXIST" ]; then
           echo "Creating new stack: $STACK_NAME"
@@ -53,22 +41,19 @@ phases:
             --parameters file://$PARAMS_FILE \
             --capabilities CAPABILITY_NAMED_IAM \
             --region $AWS_DEFAULT_REGION
-
           echo "Waiting for stack creation..."
           aws cloudformation wait stack-create-complete \
             --stack-name $STACK_NAME \
             --region $AWS_DEFAULT_REGION
           echo "Stack created successfully."
-
         elif [ "$STACK_STATUS" = "ROLLBACK_COMPLETE" ]; then
-          echo "Stack is in ROLLBACK_COMPLETE — deleting and recreating..."
+          echo "Stack is in ROLLBACK_COMPLETE - deleting and recreating..."
           aws cloudformation delete-stack \
             --stack-name $STACK_NAME \
             --region $AWS_DEFAULT_REGION
           aws cloudformation wait stack-delete-complete \
             --stack-name $STACK_NAME \
             --region $AWS_DEFAULT_REGION
-
           aws cloudformation create-stack \
             --stack-name $STACK_NAME \
             --template-body file://$TEMPLATE_FILE \
@@ -79,7 +64,6 @@ phases:
             --stack-name $STACK_NAME \
             --region $AWS_DEFAULT_REGION
           echo "Stack recreated successfully."
-
         else
           echo "Updating existing stack: $STACK_NAME"
           UPDATE_OUTPUT=$(aws cloudformation update-stack \
@@ -88,9 +72,8 @@ phases:
             --parameters file://$PARAMS_FILE \
             --capabilities CAPABILITY_NAMED_IAM \
             --region $AWS_DEFAULT_REGION 2>&1 || echo "NO_CHANGE")
-
           if echo "$UPDATE_OUTPUT" | grep -q "No updates are to be performed"; then
-            echo "No changes detected — stack is already up to date."
+            echo "No changes detected - stack is already up to date."
           else
             echo "Waiting for stack update..."
             aws cloudformation wait stack-update-complete \
@@ -102,7 +85,7 @@ phases:
 
   post_build:
     commands:
-      - echo "=== Post-build phase — printing outputs ==="
+      - echo "=== Post-build phase - printing outputs ==="
       - |
         aws cloudformation describe-stacks \
           --stack-name $STACK_NAME \
