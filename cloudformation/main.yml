@@ -290,10 +290,10 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           set -e
-          yum update -y
+          dnf update -y
 
-          # Install CodeDeploy Agent
-          yum install -y ruby wget
+          # Install CodeDeploy Agent (Amazon Linux 2023)
+          dnf install -y ruby wget
           cd /tmp
           wget https://aws-codedeploy-${AWS::Region}.s3.${AWS::Region}.amazonaws.com/latest/install
           chmod +x ./install
@@ -301,10 +301,18 @@ Resources:
           systemctl start codedeploy-agent
           systemctl enable codedeploy-agent
 
-          # Install nginx
-          amazon-linux-extras enable nginx1 2>/dev/null || true
-          yum install -y nginx
+          # Install nginx (Amazon Linux 2023 uses dnf, not amazon-linux-extras)
+          dnf install -y nginx
+
+          # Remove the default server block from nginx.conf so our
+          # conf.d/react-app.conf is the only server on port 80
+          sed -i '/^    server {/,/^    }/d' /etc/nginx/nginx.conf
+
           systemctl enable nginx
+
+          # Ensure web root exists with correct ownership
+          mkdir -p /var/www/html
+          chown -R nginx:nginx /var/www/html
 
           echo "Bootstrap complete: ${Project}-${Environment}"
 

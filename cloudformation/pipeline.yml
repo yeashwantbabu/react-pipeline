@@ -99,6 +99,7 @@ Resources:
                   - iam:AttachRolePolicy
                   - iam:DetachRolePolicy
                   - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
                   - iam:TagRole
                   - iam:GetInstanceProfile
                   - iam:ListInstanceProfiles
