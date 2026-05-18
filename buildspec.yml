@@ -21,6 +21,14 @@ phases:
       - echo "Region $AWS_DEFAULT_REGION"
       - aws cloudformation validate-template --template-body file://$TEMPLATE_FILE --region $AWS_DEFAULT_REGION
       - |
+        AMI_ID=$(aws ssm get-parameter \
+          --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 \
+          --region $AWS_DEFAULT_REGION \
+          --query "Parameter.Value" \
+          --output text)
+        echo "Resolved AMI ID: $AMI_ID"
+        echo $AMI_ID > /tmp/ami_id.txt
+      - |
         python3 - <<'PYEOF'
         import json, sys
 
@@ -49,6 +57,10 @@ phases:
 
         all_params = json.load(open(params_file))
         filtered = [p for p in all_params if p['ParameterKey'] in declared_keys]
+
+        # Inject the AMI ID resolved from SSM
+        ami_id = open('/tmp/ami_id.txt').read().strip()
+        filtered.append({'ParameterKey': 'AmiId', 'ParameterValue': ami_id})
 
         with open(output_file, 'w') as f:
             json.dump(filtered, f, indent=2)

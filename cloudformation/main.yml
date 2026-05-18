@@ -56,10 +56,9 @@ Parameters:
     Type: AWS::EC2::Subnet::Id
     Description: Existing public subnet ID within the VPC
 
-  # Resolves automatically to the latest AL2023 x86_64 AMI in the current region
-  LatestAL2023AmiId:
-    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: Amazon Linux 2023 AMI ID for the current region
 
 # ──────────────────────────────────────────────────────────────
 # RESOURCES
@@ -73,7 +72,7 @@ Resources:
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: !Sub ${Project}-${Environment} — HTTP public, SSH restricted
+      GroupDescription: !Sub ${Project}-${Environment} - HTTP public, SSH restricted
       VpcId: !Ref VpcId
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -207,7 +206,7 @@ Resources:
     Properties:
       InstanceType: !Ref EC2InstanceType
       KeyName: !Ref EC2KeyPair
-      ImageId: !Ref LatestAL2023AmiId
+      ImageId: !Ref AmiId
       SubnetId: !Ref SubnetId
       SecurityGroupIds:
         - !Ref EC2SecurityGroup
