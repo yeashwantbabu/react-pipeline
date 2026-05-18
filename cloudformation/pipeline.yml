@@ -1,12 +1,22 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  CodePipeline for deploying infrastructure (VPC, EC2, CodeDeploy, React pipeline).
-  Push to infra repo → CodeBuild runs deploy.sh → deploys main.yml → React pipeline is live.
+  Infra Pipeline — bootstrapped once via deploy.sh.
+  On every push to the infra repo, CodeBuild runs buildspec.yml
+  which deploys main.yml (VPC, EC2, CodeDeploy, React pipeline).
 
 # ──────────────────────────────────────────────────────────────
 # PARAMETERS
 # ──────────────────────────────────────────────────────────────
 Parameters:
+
+  Project:
+    Type: String
+    Description: Name of the project — used as prefix for all resource names
+
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Description: Deployment environment
 
   ConnectionArn:
     Type: String
@@ -14,43 +24,43 @@ Parameters:
 
   InfraRepository:
     Type: String
-    Description: GitHub repo for infra — format owner/repo
+    Description: GitHub repo for infra code — format owner/repo
 
   InfraBranch:
     Type: String
-    Description: Branch to track
+    Description: Branch to track e.g. main
 
-  Environment:
+  ArtifactsBucket:
     Type: String
-    AllowedValues: [dev, staging, prod]
-
-  Project:
-    Type: String
-    Description: Name of the project
-
-  S3Bucket:
-    Type: String
-    Description: S3 bucket name for CodePipeline artifacts
+    Description: >
+      S3 bucket name for CodePipeline artifacts.
+      Created by this template and shared with main.yml.
 
 # ──────────────────────────────────────────────────────────────
 # RESOURCES
 # ──────────────────────────────────────────────────────────────
 Resources:
 
+  # ── S3 — Artifact bucket (created ONCE here, shared with main.yml) ──
   ArtifactBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Ref S3Bucket
+      BucketName: !Ref ArtifactsBucket
       VersioningConfiguration:
         Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: AES256
 
+  # ── IAM — Pipeline + CodeBuild role ─────────────────────────
   PipelineRole:
     Type: AWS::IAM::Role
-    DependsOn: ArtifactBucket
     Properties:
       RoleName: !Sub ${Project}-${Environment}-pipeline-role
       AssumeRolePolicyDocument:
@@ -61,23 +71,24 @@ Resources:
               Service:
                 - codepipeline.amazonaws.com
                 - codebuild.amazonaws.com
-                - codedeploy.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: PipelinePermissions
+        - PolicyName: InfraPipelinePermissions
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Sid: S3Access
+                Effect: Allow
                 Action:
                   - s3:GetObject
                   - s3:PutObject
                   - s3:GetObjectVersion
                   - s3:ListBucket
                 Resource:
-                  - !Sub arn:aws:s3:::${S3Bucket}
-                  - !Sub arn:aws:s3:::${S3Bucket}/*
-              - Effect: Allow
+                  - !Sub arn:aws:s3:::${ArtifactsBucket}
+                  - !Sub arn:aws:s3:::${ArtifactsBucket}/*
+              - Sid: IAMAccess
+                Effect: Allow
                 Action:
                   - iam:PassRole
                   - iam:GetRole
@@ -89,9 +100,6 @@ Resources:
                   - iam:DetachRolePolicy
                   - iam:PutRolePolicy
                   - iam:TagRole
-                Resource: "*"
-              - Effect: Allow
-                Action:
                   - iam:GetInstanceProfile
                   - iam:ListInstanceProfiles
                   - iam:CreateInstanceProfile
@@ -99,40 +107,57 @@ Resources:
                   - iam:AddRoleToInstanceProfile
                   - iam:RemoveRoleFromInstanceProfile
                 Resource: "*"
-              - Effect: Allow
+              - Sid: CloudFormationAccess
+                Effect: Allow
                 Action:
-                  - cloudformation:*
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:DescribeStackResources
+                  - cloudformation:GetTemplate
+                  - cloudformation:ValidateTemplate
+                  - cloudformation:ListStacks
+                Resource: "*"
+              - Sid: EC2Access
+                Effect: Allow
+                Action:
                   - ec2:*
-                  - ssm:*
-                  - cloudwatch:*
-                  - autoscaling:*
-                  - elasticloadbalancing:*
+                Resource: "*"
+              - Sid: CICDAccess
+                Effect: Allow
+                Action:
                   - codepipeline:*
                   - codebuild:*
                   - codedeploy:*
+                Resource: "*"
+              - Sid: SSMAccess
+                Effect: Allow
+                Action:
+                  - ssm:*
+                Resource: "*"
+              - Sid: LogsAccess
+                Effect: Allow
+                Action:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
                 Resource: "*"
-              - Effect: Allow
-                Action:
-                  - ssm:PutParameter
-                  - ssm:GetParameter
-                  - ssm:DeleteParameter
-                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Project}/${Environment}/*
-              - Effect: Allow
+              - Sid: CodeStarConnection
+                Effect: Allow
                 Action:
                   - codestar-connections:UseConnection
                 Resource: !Ref ConnectionArn
-              - Effect: Allow
-                Action: "*"
-                Resource: "*"
 
+  # ── CodeBuild — runs buildspec.yml to deploy main.yml ───────
   InfraCodeBuildProject:
     Type: AWS::CodeBuild::Project
-    DependsOn: PipelineRole
     Properties:
-      Name: !Join ["-", [!Ref Project, "infra", !Ref Environment]]
+      Name: !Sub ${Project}-infra-${Environment}
+      Description: Deploys main.yml (VPC, EC2, CodeDeploy, React pipeline)
       Source:
         Type: CODEPIPELINE
         BuildSpec: buildspec.yml
@@ -146,23 +171,23 @@ Resources:
         Type: LINUX_CONTAINER
         EnvironmentVariables:
           - Name: STACK_NAME
-            Value: !Join ["-", [!Ref Project, "infra", !Ref Environment]]
-          - Name: ENVIRONMENT
-            Value: !Ref Environment
+            Value: !Sub ${Project}-infra-${Environment}
           - Name: PROJECT
             Value: !Ref Project
+          - Name: ENVIRONMENT
+            Value: !Ref Environment
+          - Name: ARTIFACTS_BUCKET
+            Value: !Ref ArtifactsBucket
       LogsConfig:
         CloudWatchLogs:
           Status: ENABLED
           GroupName: !Sub /aws/codebuild/${Project}-infra-${Environment}
 
+  # ── CodePipeline — Source → Build ───────────────────────────
   InfraPipeline:
     Type: AWS::CodePipeline::Pipeline
-    DependsOn:
-      - ArtifactBucket
-      - InfraCodeBuildProject
     Properties:
-      Name: !Join ["-", [!Ref Project, "infra", !Ref Environment]]
+      Name: !Sub ${Project}-infra-${Environment}
       RoleArn: !GetAtt PipelineRole.Arn
       ArtifactStore:
         Type: S3
@@ -211,5 +236,5 @@ Outputs:
     Value: !Ref InfraPipeline
 
   ArtifactBucketName:
-    Description: S3 bucket for pipeline artifacts
+    Description: S3 bucket used for pipeline artifacts (shared with main.yml)
     Value: !Ref ArtifactBucket

@@ -1,12 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Full infrastructure for React SPA CI/CD.
-  Creates: VPC, EC2, CodeDeploy, S3, IAM,
-  and the React App CodePipeline (Source → Build → Deploy).
-  Triggered by the Infra Pipeline after infra is ready.
+  Main infrastructure stack — deployed by the Infra Pipeline (buildspec.yml).
+  Creates: VPC, EC2, CodeDeploy, IAM roles, and the React App CodePipeline.
+  The S3 artifact bucket is NOT created here — it already exists from pipeline.yml.
 
 # ──────────────────────────────────────────────────────────────
-# PARAMETERS  (all values come from parameters.json — no hardcoding)
+# PARAMETERS
 # ──────────────────────────────────────────────────────────────
 Parameters:
 
@@ -34,7 +33,9 @@ Parameters:
 
   ArtifactsBucket:
     Type: String
-    Description: S3 bucket name for pipeline artifacts (shared with infra pipeline)
+    Description: >
+      Existing S3 bucket for pipeline artifacts.
+      Already created by pipeline.yml — do NOT recreate here.
 
   EC2InstanceType:
     Type: String
@@ -47,7 +48,7 @@ Parameters:
     AllowedPattern: (\d{1,3}\.){3}\d{1,3}/32
 
 # ──────────────────────────────────────────────────────────────
-# MAPPINGS  — Amazon Linux 2023 AMI per region
+# MAPPINGS — Amazon Linux 2023 AMI per region
 # ──────────────────────────────────────────────────────────────
 Mappings:
   AmiMap:
@@ -127,13 +128,13 @@ Resources:
       RouteTableId: !Ref RouteTable
 
   # ════════════════════════════════════════════
-  # SECURITY GROUPS
+  # SECURITY GROUP
   # ════════════════════════════════════════════
 
   EC2SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: !Sub ${Project}-${Environment} EC2 SG — HTTP public, SSH restricted
+      GroupDescription: !Sub ${Project}-${Environment} — HTTP public, SSH restricted
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -149,7 +150,7 @@ Resources:
           Value: !Sub ${Project}-${Environment}-ec2-sg
 
   # ════════════════════════════════════════════
-  # EC2 KEY PAIR  (auto-created, private key → SSM)
+  # EC2 KEY PAIR (auto-created, private key stored in SSM)
   # ════════════════════════════════════════════
 
   EC2KeyPair:
@@ -187,6 +188,81 @@ Resources:
       InstanceProfileName: !Sub ${Project}-${Environment}-ec2-profile
       Roles:
         - !Ref EC2InstanceRole
+
+  # ════════════════════════════════════════════
+  # IAM — React pipeline role
+  #
+  # CodeBuild resource uses wildcard ARN — NOT !GetAtt ReactCodeBuildProject.Arn
+  # Reason: using !GetAtt here creates a circular dependency:
+  #   ReactPipelineRole → ReactCodeBuildProject → ReactPipelineRole
+  # Wildcard is scoped to this account + region, so it is safe.
+  # ════════════════════════════════════════════
+
+  ReactPipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${Project}-${Environment}-react-pipeline-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+                - codebuild.amazonaws.com
+                - codedeploy.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ReactPipelinePermissions
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: S3ArtifactAccess
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetObjectVersion
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${ArtifactsBucket}
+                  - !Sub arn:aws:s3:::${ArtifactsBucket}/*
+              - Sid: CodeBuildAccess
+                Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuildBatches
+                  - codebuild:StartBuildBatch
+                Resource: !Sub arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/*
+              - Sid: CodeDeployAccess
+                Effect: Allow
+                Action:
+                  - codedeploy:CreateDeployment
+                  - codedeploy:GetApplication
+                  - codedeploy:GetApplicationRevision
+                  - codedeploy:GetDeployment
+                  - codedeploy:GetDeploymentConfig
+                  - codedeploy:RegisterApplicationRevision
+                Resource: "*"
+              - Sid: CodeStarConnection
+                Effect: Allow
+                Action:
+                  - codestar-connections:UseConnection
+                Resource: !Ref ConnectionArn
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Sid: SSMParameterAccess
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Project}/${Environment}/*
 
   # ════════════════════════════════════════════
   # EC2 INSTANCE
@@ -231,89 +307,6 @@ Resources:
           systemctl enable nginx
 
           echo "Bootstrap complete: ${Project}-${Environment}"
-
-  # ════════════════════════════════════════════
-  # S3 ARTIFACT BUCKET  (shared with infra pipeline)
-  # ════════════════════════════════════════════
-
-  ArtifactBucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Ref ArtifactsBucket
-      VersioningConfiguration:
-        Status: Enabled
-      LifecycleConfiguration:
-        Rules:
-          - Id: ExpireOldArtifacts
-            Status: Enabled
-            ExpirationInDays: 30
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-
-  # ════════════════════════════════════════════
-  # IAM — Pipeline role (CodePipeline + CodeBuild + CodeDeploy)
-  # ════════════════════════════════════════════
-
-  PipelineRole:
-    Type: AWS::IAM::Role
-    DependsOn: ArtifactBucket
-    Properties:
-      RoleName: !Sub ${Project}-${Environment}-react-pipeline-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - codepipeline.amazonaws.com
-                - codebuild.amazonaws.com
-                - codedeploy.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: ReactPipelinePermissions
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                  - s3:PutObject
-                  - s3:GetObjectVersion
-                  - s3:ListBucket
-                Resource:
-                  - !Sub arn:aws:s3:::${ArtifactsBucket}
-                  - !Sub arn:aws:s3:::${ArtifactsBucket}/*
-              - Effect: Allow
-                Action:
-                  - codebuild:BatchGetBuilds
-                  - codebuild:StartBuild
-                Resource: !GetAtt ReactCodeBuildProject.Arn
-              - Effect: Allow
-                Action:
-                  - codedeploy:CreateDeployment
-                  - codedeploy:GetApplication
-                  - codedeploy:GetApplicationRevision
-                  - codedeploy:GetDeployment
-                  - codedeploy:GetDeploymentConfig
-                  - codedeploy:RegisterApplicationRevision
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - codestar-connections:UseConnection
-                Resource: !Ref ConnectionArn
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogGroup
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: "*"
-              - Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                  - ssm:GetParameters
-                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${Project}/${Environment}/*
 
   # ════════════════════════════════════════════
   # CODEDEPLOY
@@ -365,15 +358,15 @@ Resources:
 
   ReactCodeBuildProject:
     Type: AWS::CodeBuild::Project
-    DependsOn: PipelineRole
     Properties:
-      Name: !Join ["-", [!Ref Project, "react", !Ref Environment]]
+      Name: !Sub ${Project}-react-${Environment}
+      Description: Builds the React SPA (npm install + npm run build)
       Source:
         Type: CODEPIPELINE
         BuildSpec: buildspec.yml
       Artifacts:
         Type: CODEPIPELINE
-      ServiceRole: !GetAtt PipelineRole.Arn
+      ServiceRole: !GetAtt ReactPipelineRole.Arn
       TimeoutInMinutes: 20
       Environment:
         ComputeType: BUILD_GENERAL1_SMALL
@@ -395,18 +388,17 @@ Resources:
           GroupName: !Sub /aws/codebuild/${Project}-react-${Environment}
 
   # ════════════════════════════════════════════
-  # CODEPIPELINE — React app  (Source → Build → Deploy)
+  # CODEPIPELINE — React app (Source → Build → Deploy)
+  #
+  # ArtifactStore uses !Ref ArtifactsBucket (the parameter)
+  # NOT a resource — bucket lives in pipeline.yml, not here.
   # ════════════════════════════════════════════
 
   ReactPipeline:
     Type: AWS::CodePipeline::Pipeline
-    DependsOn:
-      - ArtifactBucket
-      - ReactCodeBuildProject
-      - CodeDeployDeploymentGroup
     Properties:
-      Name: !Join ["-", [!Ref Project, "react", !Ref Environment]]
-      RoleArn: !GetAtt PipelineRole.Arn
+      Name: !Sub ${Project}-react-${Environment}
+      RoleArn: !GetAtt ReactPipelineRole.Arn
       ArtifactStore:
         Type: S3
         Location: !Ref ArtifactsBucket
@@ -476,8 +468,8 @@ Outputs:
       Name: !Sub ${Project}-${Environment}-EC2IP
 
   ReactPipelineURL:
-    Description: React app CodePipeline URL
-    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${ReactPipeline}/view
+    Description: React app CodePipeline console URL
+    Value: !Sub https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${Project}-react-${Environment}/view
 
   CodeDeployAppName:
     Description: CodeDeploy Application name
@@ -488,7 +480,7 @@ Outputs:
     Value: !Sub ssh -i ${Project}-${Environment}-keypair.pem ec2-user@${EC2Instance.PublicIp}
 
   SSMKeyCommand:
-    Description: CLI command to download private key from SSM
+    Description: CLI command to download the EC2 private key from SSM
     Value: !Sub >
       aws ssm get-parameter
       --name /ec2/keypair/${EC2KeyPair.KeyPairId}

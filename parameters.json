@@ -9,7 +9,7 @@
   },
   {
     "ParameterKey": "ConnectionArn",
-    "ParameterValue": "arn:aws:codestar-connections:REGION:ACCOUNT_ID:connection/XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+    "ParameterValue": "arn:aws:codeconnections:us-east-1:885885860822:connection/898eb7b9-a910-4ce1-ae8b-748aa34f93c1"
   },
   {
     "ParameterKey": "ReactRepository",
