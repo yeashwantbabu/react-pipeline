@@ -10,7 +10,7 @@ phases:
   install:
     commands:
       - echo "=== Install phase ==="
-      - pip install --upgrade awscli --quiet
+      - aws --version
 
   pre_build:
     commands:
